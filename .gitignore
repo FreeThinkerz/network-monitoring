@@ -1,0 +1,49 @@
+## Byte-code files
+*.pyc
+__pycache__/
+
+## Virtual environment
+## Common names for virtual environment directories are venv, .venv, env, .env
+## You might need to adjust this if your virtual environment has a different name.
+venv/
+.venv/
+env/
+.env/
+
+## Editors and IDEs
+.vscode/
+.idea/
+
+## Operating System files
+.DS_Store # macOS
+Thumbs.db # Windows
+
+## Package managers
+## Pip freeze requirements file - generated automatically
+# requirements.txt
+
+# Pip cache
+.pip_cache/
+
+## Build artifacts
+dist/
+build/
+*.egg-info/
+
+## Documentation
+docs/_build/
+
+## Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+## Jupyter Notebooks output
+.ipynb_checkpoints
+
+## Environment variables file
+# .env
+
+## Any other files you don't want to commit
+## For example:
+## my_secret_config.ini
