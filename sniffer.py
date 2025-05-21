@@ -2,37 +2,36 @@ import datetime
 import threading
 import time
 import requests
+import socketio
 from scapy.layers.inet import ICMP, IP, TCP, UDP
 from scapy.layers.inet6 import IPv6
 from scapy.layers.l2 import ARP, Ether
 from scapy.packet import Packet
 from scapy.sendrecv import sniff
-import socketio
 
-BACKEND_URL = "http://localhost:5000/packet"
 packets_buffer = []
 SEND_INTERVAL = 5
-sio = socketio.Client()
-sio.connect("http://127.0.0.1:5000")
 
 
-def send_batched_packets():
+def send_batched_packets(sio: socketio.Client):
     while True:
         time.sleep(SEND_INTERVAL)
         payload = packets_buffer.copy()
-        try:
-            # response = requests.post(BACKEND_URL, json=payload)
-            # response.raise_for_status()
-            sio.emit("NewPackets", payload)
-            print(f"Sent {len(payload)} packets to backend")
-            packets_buffer.clear()
-        except requests.exceptions.RequestException:
-            pass
-            print("Failed Sending {} packet(s) to server".format(len(payload)))
-            packets_buffer.extend(payload)
+
+        if len(payload):
+            try:
+                # response = requests.post(BACKEND_URL, json=payload)
+                # response.raise_for_status()
+                sio.emit("NewPackets", data=payload)
+                print(f"Sent {len(payload)} packets to backend")
+                packets_buffer.clear()
+            except requests.exceptions.RequestException:
+                pass
+                print("Failed Sending {} packet(s) to server".format(len(payload)))
+                packets_buffer.extend(payload)
 
 
-def packet_callback(packet: Packet):
+def handle_sniffed_packets(packet: Packet):
     if not (
         packet.haslayer(IP)
         or packet.haslayer(Ether)
@@ -114,7 +113,7 @@ def main():
     thread = threading.Thread(target=send_batched_packets, daemon=True)
     thread.start()
     sniff(
-        prn=packet_callback,
+        prn=handle_sniffed_packets,
         # count=10
     )  # Captures 10 packets; remove count for continuous sniffing
 
