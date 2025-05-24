@@ -1,7 +1,12 @@
 import atexit
+import os
+import socket
 import requests
 import socketio
 from threading import Thread
+import platform
+import uuid
+import subprocess
 
 from pynput import keyboard
 from scapy.sendrecv import sniff
@@ -38,14 +43,85 @@ def on_exit():
 
 atexit.register(on_exit)
 
+
+def get_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # doesn't even have to be reachable
+        s.connect(("89.207.132.170", 1))
+        IP = s.getsockname()[0]
+    except Exception:
+        IP = "127.0.0.1"
+    finally:
+        s.close()
+    return IP
+
+
+def get_manufacturer():
+    result = "N/A"
+
+    match platform.system():
+        case "Linux":
+            try:
+                with open("/sys/class/dmi/id/chassis_vendor", "r") as f:
+                    result = f.read().strip()
+            except FileNotFoundError:
+                pass
+
+        case "Windows":
+            try:
+                result = subprocess.check_output(
+                    "wmic bios get manufacturer", shell=True, text=True
+                ).strip()
+            except subprocess.CalledProcessError:
+                pass
+        case "Darwin":
+            try:
+                result = (
+                    subprocess.check_output(
+                        "ioreg -l | grep -A 1 'VendorName'", shell=True, text=True
+                    )
+                    .split("\n")[1]
+                    .strip()
+                )
+            except subprocess.CalledProcessError:
+                pass
+
+
 if __name__ == "__main__":
     print("Initializing Socket Server")
-    _ = requests.get(f"{BACKEND_URL}/api/socket.io")
 
     print("Attempting Socket connection")
     sio = socketio.Client()
-    sio.connect(BACKEND_URL, socketio_path="/api/socket.io")
-    sio.emit("NetworkNodeConnection")
+
+    try:
+        requests.get(f"{BACKEND_URL}/socket.io")
+    except Exception:
+        pass
+
+    sio.connect(
+        BACKEND_URL,
+        socketio_path="/api/socket.io",
+        transports=["websocket"],
+        retry=True,
+    )
+
+    node = {
+        "user": os.getlogin(),
+        "name": platform.node(),
+        "type": "workstation",
+        # "hostname": socket.gethostname(),
+        "ip": get_ip(),
+        "mac": ":".join(
+            ["{:02x}".format((uuid.getnode() >> i) & 0xFF) for i in range(0, 8 * 6, 8)][
+                ::-1
+            ]
+        ),
+        "os": platform.system() + "  " + platform.release(),
+        "manufacturer": get_manufacturer(),
+    }
+
+    sio.emit("join", ["Nodes", node])
 
     print("Starting Network Monitor...")
     # Start various threads
