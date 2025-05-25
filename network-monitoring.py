@@ -7,7 +7,7 @@ from threading import Thread
 import platform
 import uuid
 import subprocess
-
+import re
 from pynput import keyboard
 from scapy.sendrecv import sniff
 
@@ -61,35 +61,149 @@ def get_ip():
     return IP
 
 
-def get_manufacturer():
-    result = "N/A"
+def get_pc_manufacturer():
+    """Gets PC manufacturer; returns 'N/A' if unknown or not determinable."""
+    system_os, manufacturer = platform.system(), None
 
-    match platform.system():
-        case "Linux":
+    if system_os == "Windows":
+        try:
+            # WMIC output is CSV: Node,Vendor. We need Vendor.
+            # Example: MYPC,Dell Inc.
+            output = subprocess.check_output(
+                ["wmic", "csproduct", "get", "vendor", "/FORMAT:CSV"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            lines = output.splitlines()
+            # Second line should contain "Node,Vendor"
+            if len(lines) > 1 and "," in lines[1]:
+                # Split only on the first comma to handle cases where Node might have a comma (unlikely)
+                vendor_part = lines[1].split(",", 1)[1].strip()
+                if vendor_part:  # Check if vendor_part is not empty
+                    manufacturer = vendor_part
+        except (
+            subprocess.CalledProcessError,
+            FileNotFoundError,
+            IndexError,
+            Exception,
+        ):
+            # Catch specific errors related to subprocess or parsing, or any other exception
+            pass
+    elif system_os == "Linux":
+        # Check DMI files for vendor information
+        paths_to_check = [
+            "/sys/class/dmi/id/sys_vendor",
+            "/sys/class/dmi/id/board_vendor",
+            "/sys/class/dmi/id/chassis_vendor",
+        ]
+        for path in paths_to_check:
             try:
-                with open("/sys/class/dmi/id/chassis_vendor", "r") as f:
-                    result = f.read().strip()
-            except FileNotFoundError:
-                pass
+                with open(path, "r") as f:
+                    content = f.read().strip()
+                    if content:  # Ensure content is not empty
+                        manufacturer = content
+                        break  # Found a manufacturer, no need to check other paths
+            except (FileNotFoundError, IOError, Exception):
+                # File might not exist, or other I/O error
+                continue
+    elif system_os == "Darwin":  # macOS
+        try:
+            # Use ioreg to get manufacturer information
+            output = subprocess.check_output(
+                ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            # Regex to find "manufacturer" = <"Actual Manufacturer">
+            match = re.search(
+                r'"manufacturer"\s*=\s*<"([^"]+)">', output, re.IGNORECASE
+            )
+            if match:
+                extracted_manufacturer = match.group(1).strip()
+                if extracted_manufacturer:  # Ensure extracted value is not empty
+                    manufacturer = extracted_manufacturer
+        except (subprocess.CalledProcessError, FileNotFoundError, Exception):
+            pass  # ioreg might fail or not be found (highly unlikely on macOS)
 
-        case "Windows":
+        # Fallback for macOS if ioreg doesn't provide a specific manufacturer
+        if not manufacturer:
+            manufacturer = "Apple Inc."
+
+    if manufacturer:
+        manufacturer = manufacturer.strip()  # Final strip
+        # List of common placeholder strings indicating no actual data
+        known_empty_placeholders = [
+            "to be filled by o.e.m.",
+            "o.e.m.",
+            "not applicable",
+            "none",
+            "undefined",
+            "default string",
+            "not specified",
+        ]
+        # If the manufacturer is a known placeholder or empty after stripping, treat as not found
+        if not manufacturer or manufacturer.lower() in known_empty_placeholders:
+            manufacturer = None
+
+    return manufacturer if manufacturer else "N/A"
+
+
+def get_pc_model():
+    """
+    Attempts to retrieve the PC model on Windows, Linux, and macOS.
+    Returns the model string if found, otherwise "Unknown".
+    """
+    system = platform.system()
+
+    if system == "Windows":
+        try:
+            # Use wmic on Windows
+            result = subprocess.run(
+                ["wmic", "csproduct", "get", "name"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            for line in result.stdout.splitlines():
+                if "Name" not in line and line.strip():
+                    return line.strip()
+        except Exception:
+            pass
+    elif system == "Linux":
+        try:
+            # Try dmidecode on Linux
+            result = subprocess.run(
+                ["sudo", "dmidecode", "-s", "system-product-name"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return result.stdout.strip()
+        except FileNotFoundError:
+            # If dmidecode is not installed, try reading from /sys/class/dmi/id/
             try:
-                result = subprocess.check_output(
-                    "wmic bios get manufacturer", shell=True, text=True
-                ).strip()
-            except subprocess.CalledProcessError:
+                with open("/sys/class/dmi/id/product_name", "r") as f:
+                    return f.read().strip()
+            except Exception:
                 pass
-        case "Darwin":
-            try:
-                result = (
-                    subprocess.check_output(
-                        "ioreg -l | grep -A 1 'VendorName'", shell=True, text=True
-                    )
-                    .split("\n")[1]
-                    .strip()
-                )
-            except subprocess.CalledProcessError:
-                pass
+        except Exception:
+            pass
+    elif system == "Darwin":  # macOS
+        try:
+            # Use system_profiler on macOS
+            result = subprocess.run(
+                ["system_profiler", "SPHardwareDataType"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            for line in result.stdout.splitlines():
+                if "Model Identifier:" in line:
+                    return line.split(":")[1].strip()
+        except Exception:
+            pass
+
+    return "Unknown"
 
 
 if __name__ == "__main__":
@@ -122,7 +236,8 @@ if __name__ == "__main__":
             ]
         ),
         "os": platform.system() + "  " + platform.release(),
-        "manufacturer": get_manufacturer(),
+        "manufacturer": get_pc_manufacturer(),
+        "model": get_pc_model(),
     }
 
     sio.emit("join", ["Nodes", node])
