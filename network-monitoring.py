@@ -224,17 +224,21 @@ if __name__ == "__main__":
         retry=True,
     )
 
-    node = {
-        "user": os.getlogin(),
-        "name": platform.node(),
-        "type": "workstation",
-        # "hostname": socket.gethostname(),
-        "ip": get_ip(),
-        "mac": ":".join(
+    mac = (
+        ":".join(
             ["{:02x}".format((uuid.getnode() >> i) & 0xFF) for i in range(0, 8 * 6, 8)][
                 ::-1
             ]
         ),
+    )[0]
+    node = {
+        "id": mac,
+        "user": os.getlogin(),
+        "name": platform.node(),
+        "type": "workstation",
+        "hostname": socket.gethostname(),
+        "ip": get_ip(),
+        "mac": mac,
         "os": platform.system() + "  " + platform.release(),
         "manufacturer": get_pc_manufacturer(),
         "model": get_pc_model(),

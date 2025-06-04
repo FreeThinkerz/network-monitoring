@@ -97,6 +97,7 @@ def handle_sniffed_packets(packet: Packet):
     if packet.haslayer(Ether):
         packet_data = {
             **packet_data,
+            "deviceId": packet[Ether].mac,
             "src": {**packet_data["src"], "mac": packet[Ether].src},
             "dest": {**packet_data["dest"], "mac": packet[Ether].dst},
         }

