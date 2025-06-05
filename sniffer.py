@@ -43,8 +43,8 @@ def handle_sniffed_packets(packet: Packet):
         return
 
     packet_data = {
-        "src": {},
-        "dest": {},
+        "src": {"ip": "N/A", "mac": "N/A", "port": "N/A"},
+        "dest": {"ip": "N/A", "mac": "N/A", "port": "N/A"},
         "timestamp": datetime.datetime.fromtimestamp(float(packet.time)).strftime(
             "%Y-%m-%d %H:%M:%S"
         ),
@@ -97,7 +97,7 @@ def handle_sniffed_packets(packet: Packet):
     if packet.haslayer(Ether):
         packet_data = {
             **packet_data,
-            "deviceId": packet[Ether].mac,
+            "deviceId": packet[Ether].src,
             "src": {**packet_data["src"], "mac": packet[Ether].src},
             "dest": {**packet_data["dest"], "mac": packet[Ether].dst},
         }
