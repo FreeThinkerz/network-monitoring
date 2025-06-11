@@ -46,10 +46,14 @@ def buffer_keystroke(key_str):
         )
 
 
-def handle_key_press(key):
-    key_str = key.name if hasattr(key, "name") else str(key)
-    print(f"{key_str} was just pressed to buffer")
-    buffer_keystroke(key_str)
+def handle_key_press(event: keyboard.KeyboardEvent):
+    if event.event_type == "down":
+        key_str = event.name if hasattr(event, "name") else str(event)
+        print(f"{key_str} was just pressed to buffer")
+        buffer_keystroke(key_str)
+    else:
+        key_str = event.name if hasattr(event, "name") else str(event)
+        print(f"{key_str} released")
 
 
 def handle_key_release(key):
